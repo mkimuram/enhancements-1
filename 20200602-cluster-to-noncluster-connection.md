@@ -259,6 +259,36 @@ How will UX be reviewed and by whom?
 
 Consider including folks that also work outside the SIG or subproject.
 -->
+#### Security Risks
+
+- As this proposal provides users with a way to change source IP addresses,
+and source IPs can be used to restrict acccess, it is required to carefully
+prevent malicious users from setting source IP addresses.
+  - User facing API should be able to restrict only right sources to assign
+    the right source IPs,
+  - Tunneling components should only allow access from right sources,
+
+#### Performance and Scalability Risks
+
+- This proposal provides a kind of tunneling between pods and external servers,
+therefore there will be performance overhead,
+- The number of tunnels needed will be the number fo combinations of pods and
+external servers, therefore scalability of performance needs to be cared,
+- Scalability of the number of source IPs consumed should be cared,
+especially for ingress access. To allow ingress access, combination of source IP
+and port is dedicated for the access, therefore the source IP can't be reused to
+listen on the same port for other purpose. As a result, source IP will be easily
+exhausted, if there is a requirement to use a specific port to access to mulitple
+pods. (For egress access, on the other hand, targetIP can be shared across tunnels,
+for each tunnel consumes clusterIP as a dedicated resource rather than targetIP.)
+
+#### UX
+
+There will be two types of actors in this use case, cluster managers and users.
+
+- Cluster managers provide users with set of IPs that can be consumed as a targetIP,
+- User consume targetIP to make sets of pods to access to the targetIP to external
+servers.
 
 ## Design Details
 
@@ -499,7 +529,7 @@ for ingress flow.
 
 Gateway is a component that is in charge of forwarding:
   - egress packets from forwarder pods to external servers,
-  - ingress packets from external servers to forwarder pods.
+  - ingress packets from external servers to forwarder pods
 
 It regularly reads `Gateway` CRD for the gateway and update the forwarding rules.
 Example implementation is the same to forwarder.
