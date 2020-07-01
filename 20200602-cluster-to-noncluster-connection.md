@@ -353,6 +353,7 @@ Note that there are two things that are needed to be considered, maybe later:
 	For example, by defining `SourceIP`, `SourceIPClaim`, and `SourceIPClass`, cluster managers will
 	specify range of IPs in `SourceIPClass`. Then, users can consume `SourceIP` by specifying
 	`SourceIPClaim`, which has `SourceIP` bound.
+	See [Design Cosideration of SourceIPClass](#design-cosideration-of-sourceipclass).
 
 Example of the `ExternalService` is as below:
 
@@ -396,6 +397,162 @@ In above case:
 
 Note that `ExternalService` resouce is namespaced resource and users will create this resource in
 their namespace.
+
+#### Design Cosideration of SourceIPClass
+
+To avoid `sourceIP` from being directly specified in `ExternalService` by users,
+`SourceIP` in `Source` struct needs to be changed to `SourceIPClaim` and it will reference to
+the name of `SourceIPClaim` in the same namespace.
+
+`Source` struct:
+```go
+type Source struct {
+    Service           ServiceRef `json:"service"`
+    SourceIPClaimName string     `json:"sourceipclaimname"`
+}
+```
+
+Then, `SourceIPClass`, `SourceIPClaim`, and `SourceIP` will be defined as below:
+
+SourceIPClass:
+```go
+type SourceIPClass struct {
+    metav1.TypeMeta   `json:",inline"`
+    metav1.ObjectMeta `json:"metadata,omitempty"`
+
+    Spec   SourceIPClassSpec   `json:"spec,omitempty"`
+}
+
+type SourceIPClassSpec struct {
+    Ranges  []Range             `json:"ranges"`
+}
+
+type Range struct {
+    Start  string `json:"start"`
+    End    string `json:"end"`
+}
+```
+
+SourceIPClaim:
+```go
+type SourceIPClaim struct {
+    metav1.TypeMeta   `json:",inline"`
+    metav1.ObjectMeta `json:"metadata,omitempty"`
+
+    Spec   SourceIPClaimSpec   `json:"spec,omitempty"`
+    Status SourceIPClaimStatus `json:"status,omitempty"`
+}
+
+type SourceIPClaimSpec struct {
+    SourceIPClassName string       `json:"sourceipclass"`
+    SourceIP          string       `json:"sourceip,omitempty"`
+}
+
+type SourceIPClaimStatus struct {
+    Conditions status.Conditions `json:"conditions"`
+    Phase      string            `json:"phase"`
+}
+```
+
+SourceIP:
+```go
+type SourceIP struct {
+    metav1.TypeMeta   `json:",inline"`
+    metav1.ObjectMeta `json:"metadata,omitempty"`
+
+    Spec   SourceIPSpec   `json:"spec,omitempty"`
+    Status SourceIPStatus `json:"status,omitempty"`
+}
+
+type SourceIPSpec struct {
+    SourceIP string               `json:"sourceip"`
+    claimRef ObjectReference      `json:"claimref"`
+}
+
+type SourceIPStatus struct {
+    Conditions status.Conditions `json:"conditions"`
+    Phase      string            `json:"phase"`
+}
+
+```
+
+An example use case is shown as below.
+
+Admin will create `SourceIPClass` like below:
+
+```yaml
+apiVersion: submariner.io/v1alpha1
+kind: SourceIPClass
+metadata:
+  name: my-source-ip-class
+spec:
+  ranges:
+    - start: 192.168.122.1
+      end: 192.168.122.100
+    - start: 192.168.122.200
+      end: 192.168.122.210
+```
+
+User will create `SourceIPClaim` like below:
+
+```yaml
+apiVersion: submariner.io/v1alpha1
+kind: SourceIPClaim
+metadata:
+  name: my-source-ip-claim
+  namespace: ns1
+spec:
+  sourceIPClassName: my-source-ip-class
+```
+
+Then, a kind of provisioner will create `SourceIP` like below:
+
+```yaml
+apiVersion: submariner.io/v1alpha1
+kind: SourceIP
+metadata:
+  name: my-source-ip-claim-XXXXX
+  namespace: ns1
+spec:
+  sourceIP: 192.168.122.1
+  objectRef:
+    kind: SourceIPClaim
+    name: my-source-ip-claim
+    namespace: ns1
+status:
+  phase: bound
+```
+
+After that, user can consume the `SourceIP` via `SourceIPClaim`
+in `ExternalService` like below:
+
+```yaml
+apiVersion: submariner.io/v1alpha1
+kind: ExternalService
+metadata:
+  name: my-externalservice
+spec:
+  targetIP: 192.168.122.139
+  sources:
+    - service:
+        namespace: ns1
+        name: my-service1
+      sourceIPClaimName: my-source-ip-claim
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+```
+
+Note that there will still be a room to discuss a model about whether sourceIP can be shared
+  - within a namespace,
+  - across namespaces.
+
+The simplest model would be to deny both of them. It will be achieved by
+  - only allow consuming one `SourceIPClaim` in one `ExternalService`,
+  - only bind one `SourceIP` to one `SourceIPClaim`.
+
+However, to maximize the utilization of IP addresses, these constraint might need to be relaxed.
 
 ### Implementation
 
